@@ -1,6 +1,7 @@
 package org.opensrp.web.security;
 
 import static java.text.MessageFormat.format;
+import static org.opensrp.web.config.security.OpenmrsUserDetailsService.USER_HASH_KEY;
 
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -12,6 +13,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.opensrp.api.domain.User;
 import org.opensrp.connector.openmrs.service.OpenmrsUserService;
+import org.opensrp.web.config.security.OpenmrsUserDetailsService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.redis.core.HashOperations;
@@ -22,6 +24,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.oauth2.provider.OAuth2Authentication;
 import org.springframework.security.web.authentication.WebAuthenticationDetails;
 import org.springframework.stereotype.Component;
@@ -51,6 +54,9 @@ public class DrishtiAuthenticationProvider implements AuthenticationProvider {
 	@Resource(name = "redisTemplate")
 	private HashOperations<String, String, Authentication> hashOps;
 
+	@Resource(name = "redisTemplate")
+	private HashOperations<String, String, User> userHashOps;
+
 	@Autowired
 	private RedisTemplate<String, String> redisTemplate;
 
@@ -64,6 +70,7 @@ public class DrishtiAuthenticationProvider implements AuthenticationProvider {
 
 	@Override
 	public Authentication authenticate(Authentication authentication) throws AuthenticationException {
+		logger.info("authenticating User");
 		String userAddress = ((WebAuthenticationDetails) authentication.getDetails()).getRemoteAddress();
 		String key = userAddress + authentication.getName();
 		if (hashOps.hasKey(key, AUTH_HASH_KEY)) {
@@ -107,6 +114,8 @@ public class DrishtiAuthenticationProvider implements AuthenticationProvider {
 	}
 
 	public User getDrishtiUser(Authentication authentication, String username) {
+		logger.info("Getting Drishti User: " + username);
+
 		User user = null;
 		if (authentication instanceof OAuth2Authentication) {
 			if (!((OAuth2Authentication) authentication).getUserAuthentication().isAuthenticated()) {
@@ -123,7 +132,25 @@ public class DrishtiAuthenticationProvider implements AuthenticationProvider {
 		try {
 			boolean response = openmrsUserService.deleteSession(authentication.getName(),
 					authentication.getCredentials().toString());
-			user = openmrsUserService.getUser(username);
+
+			if (userHashOps.hasKey(username, USER_HASH_KEY)) {
+				System.out.println(DrishtiAuthenticationProvider.class.getSimpleName() + " : Obtained the user details from Redis");
+				user = userHashOps.get(username, USER_HASH_KEY);
+			}
+
+			if (user == null) {
+				System.out.println(DrishtiAuthenticationProvider.class.getSimpleName() + " : Loading user from openmrs service");
+				user = openmrsUserService.getUser(username);
+				if (user == null) {
+					throw new UsernameNotFoundException("User not found: " + username);
+				}
+
+				System.out.println(DrishtiAuthenticationProvider.class.getSimpleName() + " : Caching user details in Redis for subsequent requests");
+				// Cache the user for subsequent requests.
+				userHashOps.put(username, USER_HASH_KEY, user);
+			}
+
+
 			if (!response) {
 				logger.error(format("{0}. Exception: {1}", INTERNAL_ERROR, "Unable to clear session"));
 

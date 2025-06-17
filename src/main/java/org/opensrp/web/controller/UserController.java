@@ -1,6 +1,7 @@
 package org.opensrp.web.controller;
 
 import static org.opensrp.web.HttpHeaderFactory.allowOrigin;
+import static org.opensrp.web.config.security.OpenmrsUserDetailsService.USER_HASH_KEY;
 import static org.springframework.http.HttpStatus.OK;
 
 import java.nio.charset.Charset;
@@ -13,6 +14,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.TimeZone;
 
+import javax.annotation.Resource;
 import javax.servlet.http.HttpServletRequest;
 
 import org.apache.commons.lang3.StringUtils;
@@ -31,6 +33,7 @@ import org.opensrp.common.util.OpenMRSCrossVariables;
 import org.opensrp.connector.openmrs.service.OpenmrsLocationService;
 import org.opensrp.connector.openmrs.service.OpenmrsUserService;
 import org.opensrp.domain.AssignedLocations;
+import org.opensrp.web.config.security.OpenmrsUserDetailsService;
 import org.smartregister.domain.LocationProperty.PropertyStatus;
 import org.opensrp.domain.Organization;
 import org.smartregister.domain.PhysicalLocation;
@@ -43,10 +46,12 @@ import org.opensrp.web.security.DrishtiAuthenticationProvider;
 import org.opensrp.web.utils.LocationUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.HashOperations;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.codec.Base64;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -81,6 +86,9 @@ public class UserController {
 
 	@Value("#{opensrp['use.opensrp.team.module']}")
 	protected boolean useOpenSRPTeamModule = false;
+
+	@Resource(name = "redisTemplate")
+	private HashOperations<String, String, User> userHashOps;
 
 	@Autowired
 	public UserController(OpenmrsLocationService openmrsLocationService, OpenmrsUserService openmrsUserService,
@@ -138,6 +146,7 @@ public class UserController {
 	}
 
 	public User currentUser(HttpServletRequest request,Authentication authentication) {
+		System.out.println("Obtaining currentUser");
 		return getAuthenticationProvider().getDrishtiUser(authentication, authentication.getName());
 	}
 
@@ -148,6 +157,7 @@ public class UserController {
 	@RequestMapping(method = RequestMethod.GET, value = "/user-details")
 	public ResponseEntity<UserDetail> getUserDetails(Authentication authentication,
 			@RequestParam(value = "anm-id", required = false) String anmIdentifier, HttpServletRequest request) {
+		logger.info("Obtaining user details");
 		Authentication auth;
 		if (authentication == null) {
 			auth = getAuthenticationAdvisor(request);
@@ -155,10 +165,27 @@ public class UserController {
 			auth = authentication;
 		}
 		if (auth != null) {
-			User user;
+			User user = null;
 			String userName = org.apache.commons.lang.StringUtils.isBlank(anmIdentifier) ? auth.getName()
 					: anmIdentifier;
-			user = openmrsUserService.getUser(userName);
+
+			if (userHashOps.hasKey(userName, USER_HASH_KEY)) {
+				logger.info("Obtained the user details from Redis");
+				user = userHashOps.get(userName, USER_HASH_KEY);
+			}
+
+			if (user == null) {
+				logger.info("Loading user from openmrs service");
+				user = openmrsUserService.getUser(userName);
+				if (user == null) {
+					throw new UsernameNotFoundException("User not found: " + userName);
+				}
+
+				logger.info("Caching user details in Redis for subsequent requests");
+				// Cache the user for subsequent requests.
+				userHashOps.put(userName, USER_HASH_KEY, user);
+			}
+
 			UserDetail userDetail = UserDetail.builder()
 					.userName(user.getUsername())
 					.roles(user.getRoles())

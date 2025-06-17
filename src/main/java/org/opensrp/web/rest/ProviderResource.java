@@ -6,6 +6,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import javax.annotation.Resource;
 import javax.servlet.http.HttpServletRequest;
 
 import org.apache.commons.lang3.StringUtils;
@@ -14,15 +15,23 @@ import org.json.JSONObject;
 import org.opensrp.api.domain.User;
 import org.opensrp.connector.openmrs.service.OpenmrsUserService;
 import org.opensrp.domain.Provider;
+import org.opensrp.web.security.DrishtiAuthenticationProvider;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.HashOperations;
 import org.springframework.http.MediaType;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestMethod;
 
+import static org.opensrp.web.config.security.OpenmrsUserDetailsService.USER_HASH_KEY;
+
 @Controller
 @RequestMapping("/rest/provider")
 public class ProviderResource extends RestResource<Provider> {
+
+	@Resource(name = "redisTemplate")
+	private HashOperations<String, String, User> userHashOps;
 
 	@Autowired
 	private OpenmrsUserService userService;
@@ -40,7 +49,23 @@ public class ProviderResource extends RestResource<Provider> {
 					resp.put("ERROR", "Username and Password not provided.");
 				} else {
 					if (userService.authenticate(u, p)) {
+
 						User usr = userService.getUser(u);
+						if (userHashOps.hasKey(u, USER_HASH_KEY)) {
+							System.out.println(ProviderResource.class.getSimpleName() + " : Obtained the user details from Redis");
+							usr = userHashOps.get(u, USER_HASH_KEY);
+						}
+
+						if (usr == null) {
+							System.out.println(ProviderResource.class.getSimpleName() + " : Loading user from openmrs service");
+							usr = userService.getUser(u);
+							if (usr != null) {
+								System.out.println(ProviderResource.class.getSimpleName() + " : Caching user details in Redis for subsequent requests");
+								// Cache the user for subsequent requests.
+								userHashOps.put(u, USER_HASH_KEY, usr);
+							}
+						}
+
 						JSONObject tm = userService.getTeamMember(usr.getAttribute("_PERSON_UUID").toString());
 						if (tm == null) {
 							resp.put("ERROR", "Given credentails donot belong to a team member.");
