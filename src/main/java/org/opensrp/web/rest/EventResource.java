@@ -124,12 +124,14 @@ public class EventResource extends RestResource<Event> {
 			String serverVersion = getStringFilter(BaseEntity.SERVER_VERSIOIN, request);
 			String team = getStringFilter(TEAM, request);
 			String teamId = getStringFilter(TEAM_ID, request);
+			String eventType = getStringFilter(EVENT_TYPE, request);
 			Integer limit = getIntegerFilter("limit", request);
 			boolean returnCount = Boolean.getBoolean(getStringFilter(RETURN_COUNT, request));
 
 			if (team != null || providerId != null || locationId != null || baseEntityId != null || teamId != null) {				
 				
-				EventSyncBean eventSyncBean = sync(providerId, locationId, baseEntityId, serverVersion, team, teamId, limit, returnCount);
+				EventSyncBean eventSyncBean = sync(providerId, locationId, baseEntityId, serverVersion, team, teamId,
+				        eventType, limit, returnCount);
 				
 				HttpHeaders headers = RestUtils.getJSONUTF8Headers();
 				if (returnCount){
@@ -168,7 +170,8 @@ public class EventResource extends RestResource<Event> {
 			        || syncParam.getBaseEntityId() != null || syncParam.getTeamId() != null) {
 				
 				EventSyncBean eventSyncBean = sync(syncParam.getProviderId(), syncParam.getLocationId(), syncParam.getBaseEntityId(),
-			        syncParam.getServerVersion(), syncParam.getTeam(), syncParam.getTeamId(), syncParam.getLimit(), syncParam.isReturnCount());
+			        syncParam.getServerVersion(), syncParam.getTeam(), syncParam.getTeamId(), syncParam.getEventType(),
+			        syncParam.getLimit(), syncParam.isReturnCount());
 				
 				HttpHeaders headers = RestUtils.getJSONUTF8Headers();
 				if (syncParam.isReturnCount()){
@@ -245,6 +248,11 @@ public class EventResource extends RestResource<Event> {
 	
 	public EventSyncBean sync(String providerId, String locationId, String baseEntityId, String serverVersion, String team,
 	        String teamId, Integer limit, boolean returnCount) {
+		return sync(providerId, locationId, baseEntityId, serverVersion, team, teamId, null, limit, returnCount);
+	}
+
+	public EventSyncBean sync(String providerId, String locationId, String baseEntityId, String serverVersion, String team,
+	        String teamId, String eventType, Integer limit, boolean returnCount) {
 		Long lastSyncedServerVersion = null;
 		if (serverVersion != null) {
 			lastSyncedServerVersion = Long.parseLong(serverVersion) + 1;
@@ -257,9 +265,9 @@ public class EventResource extends RestResource<Event> {
 		eventSearchBean.setLocationId(locationId);
 		eventSearchBean.setBaseEntityId(baseEntityId);
 		eventSearchBean.setServerVersion(lastSyncedServerVersion);
+		eventSearchBean.setEventType(eventType);
 
 		return getEventsAndClients(eventSearchBean, limit == null || limit == 0 ? 25 : limit, returnCount);
-
 	}
 	
 	private EventSyncBean getEventsAndClients(EventSearchBean eventSearchBean, Integer limit, boolean returnCount) {
